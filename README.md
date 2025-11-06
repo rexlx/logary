@@ -59,20 +59,13 @@ func (u *UDPLogger) receiveDataOverUDP() {
 			panic(err)
 		}
 
-		u.AddToCache(buf[:n])
 
-		go u.writeToLog(buf[:n])
+		u.writeToLog(buf[:n])
+		// go u.writeToLog(buf[:n]). // if youre feeling crazy
 	}
 }
 
 func (u *UDPLogger) writeToLog(data []byte) {
 	u.Log.Debugf("%s", bytes.TrimRight(data, "\n"))
-}
-
-func (u *UDPLogger) AddToCache(data []byte) {
-	if len(u.MessageCache) > 99 {
-		u.MessageCache = u.MessageCache[1:]
-	}
-	u.MessageCache = append(u.MessageCache, string(data))
 }
 ```
