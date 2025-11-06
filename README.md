@@ -1,5 +1,7 @@
 a custom logging library
 
+### example udp logger using logary for rotation.
+
 ```go
 
 package main
@@ -59,4 +61,19 @@ func (u *UDPLogger) writeToLog(data []byte) {
 	u.Log.Debugf("%s", bytes.TrimRight(data, "\n"))
 }
 
+```
+
+### available methods
+
+```go
+type CustomLogger interface {
+	Debug(args ...interface{})
+	Info(args ...interface{})
+	Warn(args ...interface{})
+	Error(args ...interface{})
+	Debugf(format string, args ...interface{})
+	Infof(format string, args ...interface{})
+	Warnf(format string, args ...interface{})
+	Errorf(format string, args ...interface{})
+}
 ```
