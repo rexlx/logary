@@ -27,6 +27,7 @@ func main() {
 	udpLogger.receiveDataOverUDP()
 
 }
+
 type UDPLogger struct {
 	Log          *logary.Logger
 	Addr         string
