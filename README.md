@@ -1,19 +1,17 @@
-my log library
-
+a custom logging library
 
 ```go
+
 package main
 
 import (
 	"bytes"
 	"net"
-	"sync"
 
 	"github.com/rexlx/logary"
 )
 
 func main() {
-	// create the logary logger
 	jsonLogger, err := logary.NewLogger(logary.Config{
 		Filename:   "structured.json",
 		Structured: true,
@@ -25,21 +23,13 @@ func main() {
 		panic(err)
 	}
 
-	// our example needs a few other things
-	mu := &sync.RWMutex{}
-	mcache := make([]string, 100)
-	// pass our custom logger to the udp logger
-	udpLogger := &UDPLogger{Addr: ":5140", Log: jsonLogger, Mutex: mu, MessageCache: mcache}
-	// start listening
+	udpLogger := &UDPLogger{Addr: ":5140", Log: jsonLogger}
 	udpLogger.receiveDataOverUDP()
 
 }
-
 type UDPLogger struct {
 	Log          *logary.Logger
-	Mutex        *sync.RWMutex
 	Addr         string
-	MessageCache []string
 }
 
 func (u *UDPLogger) receiveDataOverUDP() {
@@ -61,11 +51,11 @@ func (u *UDPLogger) receiveDataOverUDP() {
 
 
 		u.writeToLog(buf[:n])
-		// go u.writeToLog(buf[:n]). // if youre feeling crazy
 	}
 }
 
 func (u *UDPLogger) writeToLog(data []byte) {
 	u.Log.Debugf("%s", bytes.TrimRight(data, "\n"))
 }
+
 ```
