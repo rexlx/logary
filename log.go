@@ -5,8 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
-	"runtime"
+	"path/filepath" // Still needed for runtime.Caller in the original (oops, removed)
 	"strings"
 	"sync"
 	"time"
@@ -52,9 +51,9 @@ type CustomLogger interface {
 
 // logEntry represents a single log message.
 type logEntry struct {
-	level   Level
-	time    time.Time
-	caller  string
+	level Level
+	time  time.Time
+	// caller  string // REMOVED
 	message string
 }
 
@@ -162,21 +161,21 @@ func (l *Logger) log(level Level, msg string) {
 		return
 	}
 
-	// Get caller info
-	var caller string
-	if l.structured {
-		_, file, line, ok := runtime.Caller(2) // 2 steps up: log -> Debug/Info... -> caller
-		if !ok {
-			file = "???"
-			line = 0
-		}
-		caller = fmt.Sprintf("%s:%d", filepath.Base(file), line)
-	}
+	// --- REMOVED CALLER LOGIC ---
+	// var caller string
+	// if l.structured {
+	// 	_, file, line, ok := runtime.Caller(2) // 2 steps up: log -> Debug/Info... -> caller
+	// 	if !ok {
+	// 		file = "???"
+	// 		line = 0
+	// 	}
+	// 	caller = fmt.Sprintf("%s:%d", filepath.Base(file), line)
+	// }
 
 	entry := logEntry{
-		level:   level,
-		time:    time.Now(),
-		caller:  caller,
+		level: level,
+		time:  time.Now(),
+		// caller:  caller, // REMOVED
 		message: msg,
 	}
 
@@ -244,19 +243,37 @@ func (l *Logger) write(entry logEntry) {
 	var logEntry []byte
 
 	if l.structured {
-		jsonEntry := struct {
-			Time    string `json:"time"`
-			Level   string `json:"level"`
-			Message string `json:"message"`
-			Caller  string `json:"caller,omitempty"`
-		}{
-			Time:    entry.time.Format(time.RFC3339Nano),
-			Level:   entry.level.String(),
-			Message: entry.message,
-			Caller:  entry.caller,
+		// --- NEW JSON MERGE LOGIC ---
+		// Base fields
+		logMap := map[string]interface{}{
+			"time":  entry.time.Format(time.RFC3339Nano),
+			"level": entry.level.String(),
 		}
-		logEntry, _ = json.Marshal(jsonEntry)
+
+		trimmedMessage := strings.TrimSpace(entry.message)
+
+		// Attempt to unmarshal as JSON object
+		var jsonObj map[string]interface{}
+		if strings.HasPrefix(trimmedMessage, "{") && strings.HasSuffix(trimmedMessage, "}") {
+			if err := json.Unmarshal([]byte(trimmedMessage), &jsonObj); err == nil {
+				// It's a valid JSON object, merge it
+				for k, v := range jsonObj {
+					if k != "time" && k != "level" { // Protect base fields
+						logMap[k] = v
+					}
+				}
+			} else {
+				// Looked like an object, but wasn't valid JSON. Treat as a string.
+				logMap["message"] = entry.message
+			}
+		} else {
+			// Not a JSON object. Treat as a plain string.
+			logMap["message"] = entry.message
+		}
+
+		logEntry, _ = json.Marshal(logMap)
 		logEntry = append(logEntry, '\n')
+		// --- END NEW JSON MERGE LOGIC ---
 
 	} else {
 		// Plain text format
@@ -341,5 +358,3 @@ func (l *Logger) Close() error {
 	l.wg.Wait()
 	return nil
 }
-
-//
