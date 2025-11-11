@@ -48,6 +48,11 @@ type CustomLogger interface {
 	Infof(format string, args ...interface{})
 	Warnf(format string, args ...interface{})
 	Errorf(format string, args ...interface{})
+	// New methods for structured byte data
+	DebugJSON(data []byte)
+	InfoJSON(data []byte)
+	WarnJSON(data []byte)
+	ErrorJSON(data []byte)
 }
 
 // logEntry represents a single log message.
@@ -56,6 +61,7 @@ type logEntry struct {
 	time    time.Time
 	caller  string
 	message string
+	rawData []byte // New field for raw structured data
 }
 
 // Logger is a thread-safe, asynchronous logger.
@@ -153,6 +159,21 @@ func (l *Logger) Errorf(format string, args ...interface{}) {
 	l.log(ErrorLevel, fmt.Sprintf(format, args...))
 }
 
+// --- New Public JSON Methods ---
+
+func (l *Logger) DebugJSON(data []byte) {
+	l.logJSON(DebugLevel, data)
+}
+func (l *Logger) InfoJSON(data []byte) {
+	l.logJSON(InfoLevel, data)
+}
+func (l *Logger) WarnJSON(data []byte) {
+	l.logJSON(WarnLevel, data)
+}
+func (l *Logger) ErrorJSON(data []byte) {
+	l.logJSON(ErrorLevel, data)
+}
+
 // --- Core Logic ---
 
 // log is the public, non-blocking method.
@@ -183,6 +204,35 @@ func (l *Logger) log(level Level, msg string) {
 	// Send to channel. This will block if the channel is full.
 	// For a more robust library, a select with a default
 	// could drop logs instead of blocking the application.
+	l.logChan <- entry
+}
+
+// logJSON is the public, non-blocking method for raw JSON data.
+// It formats the entry and sends it to the channel.
+func (l *Logger) logJSON(level Level, data []byte) {
+	if level < l.level {
+		return
+	}
+
+	// Get caller info
+	var caller string
+	if l.structured {
+		_, file, line, ok := runtime.Caller(2) // 2 steps up: logJSON -> DebugJSON/InfoJSON... -> caller
+		if !ok {
+			file = "???"
+			line = 0
+		}
+		caller = fmt.Sprintf("%s:%d", filepath.Base(file), line)
+	}
+
+	entry := logEntry{
+		level:   level,
+		time:    time.Now(),
+		caller:  caller,
+		rawData: data, // Use the new field
+	}
+
+	// Send to channel.
 	l.logChan <- entry
 }
 
@@ -241,30 +291,71 @@ func (l *Logger) write(entry logEntry) {
 		fmt.Fprintf(os.Stderr, "logger: failed to check rotation: %v\n", err)
 	}
 
-	var logEntry []byte
+	var logEntryBytes []byte
 
 	if l.structured {
-		jsonEntry := struct {
-			Time    string `json:"time"`
-			Level   string `json:"level"`
-			Message string `json:"message"`
-			Caller  string `json:"caller,omitempty"`
-		}{
-			Time:    entry.time.Format(time.RFC3339Nano),
-			Level:   entry.level.String(),
-			Message: entry.message,
-			Caller:  entry.caller,
+		// --- Path for rawData (structured JSON) ---
+		if entry.rawData != nil {
+			var data map[string]interface{}
+			// Try to unmarshal the user's data
+			if err := json.Unmarshal(entry.rawData, &data); err != nil {
+				// Data is not valid JSON. Log as a string with an error.
+				jsonEntry := struct {
+					Time    string `json:"time"`
+					Level   string `json:"level"`
+					Message string `json:"message"` // Log the raw bytes as a string
+					Caller  string `json:"caller,omitempty"`
+					Error   string `json:"log_error,omitempty"`
+				}{
+					Time:    entry.time.Format(time.RFC3339Nano),
+					Level:   entry.level.String(),
+					Message: string(entry.rawData),
+					Caller:  entry.caller,
+					Error:   "failed to unmarshal structured data",
+				}
+				logEntryBytes, _ = json.Marshal(jsonEntry)
+			} else {
+				// Data IS valid JSON. Merge logger fields into it.
+				// Note: This will overwrite user fields with the same name (time, level, caller).
+				data["time"] = entry.time.Format(time.RFC3339Nano)
+				data["level"] = entry.level.String()
+				if entry.caller != "" {
+					data["caller"] = entry.caller
+				}
+				// Re-marshal the merged map
+				logEntryBytes, _ = json.Marshal(data)
+			}
+
+			// --- Path for message (standard string log) ---
+		} else {
+			jsonEntry := struct {
+				Time    string `json:"time"`
+				Level   string `json:"level"`
+				Message string `json:"message"`
+				Caller  string `json:"caller,omitempty"`
+			}{
+				Time:    entry.time.Format(time.RFC3339Nano),
+				Level:   entry.level.String(),
+				Message: entry.message,
+				Caller:  entry.caller,
+			}
+			logEntryBytes, _ = json.Marshal(jsonEntry)
 		}
-		logEntry, _ = json.Marshal(jsonEntry)
-		logEntry = append(logEntry, '\n')
+		logEntryBytes = append(logEntryBytes, '\n')
 
 	} else {
 		// Plain text format
-		logEntry = []byte(fmt.Sprintf("%s [%s] %s\n", entry.time.Format(time.RFC3339), entry.level.String(), entry.message))
+		var message string
+		if entry.rawData != nil {
+			message = string(entry.rawData) // Use raw data as message
+		} else {
+			message = entry.message // Use string message
+		}
+		logEntryBytes = []byte(fmt.Sprintf("%s [%s] %s\n", entry.time.Format(time.RFC3339), entry.level.String(), message))
 	}
 
 	// Write to buffer (not flushed immediately)
-	if _, err := l.writer.Write(logEntry); err != nil {
+	if _, err := l.writer.Write(logEntryBytes); err != nil {
 		fmt.Fprintf(os.Stderr, "logger: failed to write: %v\n", err)
 	}
 }
